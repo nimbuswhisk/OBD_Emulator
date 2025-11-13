@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>OBD Emulator — Deluxe (Fixed)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0b0b0b;--panel:#0f1113;--accent:#ffd54f;--accent2:#4fc3f7;--text:#eaeaea}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;margin:8px;padding:12px}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.h1{color:var(--accent);font-weight:700}
+.container{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
+.panel{background:linear-gradient(180deg,#0b0b0b,#0f1113);padding:12px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.6)}
+.controls{width:360px}
+.slider{width:100%}
+.btn{background:#222;border:1px solid #333;color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer}
+.small{font-size:12px;color:#9aa}
+.legend{display:flex;gap:8px;align-items:center;margin-top:8px}
+.kv{display:flex;justify-content:space-between;margin-top:6px}
+</style></head><body>
+<div class=header><div class=h1>OBD-II Emulator — Deluxe (Fixed)</div><div class=small>ELM327 TCP: <b>port 35000</b></div></div>
+<div class=container>
+<div class=panel style="width:560px">
+<canvas id=g width=520 height=360></canvas>
+<div style="display:flex;justify-content:space-between;margin-top:6px">
+ <div><div class=small>RPM</div><div id=rpm_txt style="font-weight:700;font-size:18px">850</div></div>
+ <div style="text-align:right"><div class=small>Speed</div><div id=speed_txt style="font-weight:700;font-size:28px">0 km/h</div></div>
+</div>
+<div class=legend><div style="width:12px;height:8px;background:var(--accent);border-radius:4px"></div><div class=small>RPM arc</div>
+<div style="width:12px;height:8px;background:var(--accent2);border-radius:4px"></div><div class=small>Speed</div></div>
+</div>
+
+<div class="panel controls">
+<div class=small>RPM</div><input id=rpm class=slider type=range min=0 max=8000 value=850>
+<div class=small>Speed (km/h)</div><input id=speed class=slider type=range min=0 max=240 value=0>
+<div class=small>Coolant (°C)</div><input id=coolant class=slider type=range min=20 max=120 value=65>
+<div class=small>Throttle (%)</div><input id=throttle class=slider type=range min=0 max=100 value=12>
+<div style="margin-top:10px;display:flex;gap:8px">
+<button id=rand class=btn>Start Random Drive</button>
+<button id=reset class=btn>Reset</button>
+<button id=export class=btn>Export CSV</button>
+</div>
+<hr style="border-color:#222;margin:8px 0">
+<div class=small>Engine Load (%)</div><input id=engine_load class=slider type=range min=0 max=100 value=12>
+<div class=small>IAT (°C)</div><input id=iat class=slider type=range min=-20 max=80 value=22>
+<div class=small>Voltage (V)</div><input id=voltage class=slider type=range min=9 max=15 step=0.1 value=12.6>
+<div class=small>MAF (g/s)</div><input id=maf class=slider type=range min=0.1 max=150 step=0.1 value=2.5>
+<div class=small>Boost (kPa)</div><input id=boost class=slider type=range min=0 max=150 value=0>
+<div class=small>AFR</div><input id=afr class=slider type=range min=10 max=22 step=0.1 value=14.7>
+</div></div>
+
+<script>
+const keys = ['rpm','speed','coolant','throttle','engine_load','iat','voltage','maf','boost','afr'];
+const S = {};
+keys.forEach(k=>S[k]=parseFloat(document.getElementById(k)?.value||0));
+
+function send(){ fetch('/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(S)}).catch(()=>{}); }
+function updateUI(){
+  keys.forEach(k=>{const el=document.getElementById(k); if(el) S[k]=parseFloat(el.value);});
+  document.getElementById('rpm_txt').innerText=Math.round(S.rpm);
+  document.getElementById('speed_txt').innerText=Math.round(S.speed)+' km/h';
+  draw(); send();
+}
+
+document.querySelectorAll('.slider').forEach(el=>el.oninput=function(){ S[this.id]=parseFloat(this.value); updateUI(); });
+
+document.getElementById('reset').onclick=function(){
+  const d={rpm:850,speed:0,coolant:65,throttle:12,engine_load:12,iat:22,voltage:12.6,maf:2.5,boost:0,afr:14.7};
+  Object.keys(d).forEach(k=>{S[k]=d[k]; const el=document.getElementById(k); if(el) el.value=d[k];});
+  updateUI();
+};
+
+let R=false;
+document.getElementById('rand').onclick=function(){
+  R=!R; this.innerText=R?'Stop Random':'Start Random Drive';
+  fetch('/random',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:R})});
+};
+
+document.getElementById('export').onclick=function(){ window.location='/export'; };
+
+// drawing
+const c=document.getElementById('g'), ctx=c.getContext('2d');
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  const cx=260,cy=170,r=120; // note cy slightly lower to make room
+  ctx.fillStyle='#050505'; ctx.beginPath(); ctx.arc(cx,cy,r+40,0,Math.PI*2); ctx.fill();
+  for(let i=0;i<=12;i++){
+    const a=Math.PI*1.18 - (i/12)*Math.PI*1.64;
+    const len=(i%3===0)?14:8;
+    ctx.strokeStyle='#2b2b2b'; ctx.lineWidth=(i%3===0)?3:1.5;
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(r-6),cy+Math.sin(a)*(r-6)); ctx.lineTo(cx+Math.cos(a)*(r+len),cy+Math.sin(a)*(r+len)); ctx.stroke();
+    if(i%3===0){ ctx.fillStyle='#ccc'; ctx.font='12px sans-serif'; ctx.fillText(Math.round(i*8000/12),cx+Math.cos(a)*(r-36),cy+Math.sin(a)*(r-36)+4); }
+  }
+  const pct = Math.max(0,Math.min(1,(S.rpm||0)/8000));
+  const start=Math.PI*1.18, end=start - pct*Math.PI*1.64;
+  const g=ctx.createLinearGradient(cx-r,cy,cx+r,cy); g.addColorStop(0,'#4fc3f7'); g.addColorStop(0.6,'#ffd54f'); g.addColorStop(1,'#ff7043');
+  ctx.strokeStyle=g; ctx.lineWidth=14; ctx.beginPath(); ctx.arc(cx,cy,r,start,end,true); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(end)*(r-40),cy+Math.sin(end)*(r-40)); ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(cx,cy,8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#050608'; ctx.fillRect(cx+90,cy-40,140,80);
+  ctx.fillStyle='#fff'; ctx.font='36px sans-serif'; ctx.textAlign='center'; ctx.fillText(Math.round(S.speed||0),cx+160,cy+10);
+  ctx.font='14px sans-serif'; ctx.fillStyle='#9ad'; ctx.fillText('km/h',cx+160,cy+36);
+  ctx.font='12px sans-serif'; ctx.fillStyle='#9aa';
+  // moved labels up to avoid clipping
+  ctx.fillText('Coolant: '+Math.round(S.coolant||0)+'°C',cx-120,cy+125);
+  ctx.fillText('IAT: '+Math.round(S.iat||0)+'°C',cx-20,cy+125);
+  ctx.fillText('Voltage: '+(S.voltage||0).toFixed(1)+'V',cx+120,cy+125);
+  ctx.fillText('Boost: '+(S.boost||0).toFixed(1)+' kPa',cx-120,cy+150);
+  ctx.fillText('AFR: '+(S.afr||0).toFixed(2),cx+120,cy+150);
+}
+draw();
+
+// poll server state periodically
+setInterval(()=>{
+  fetch('/values').then(r=>r.json()).then(j=>{ Object.assign(S,j); Object.keys(S).forEach(k=>{const el=document.getElementById(k); if(el) el.value=S[k];}); document.getElementById('rpm_txt').innerText=Math.round(S.rpm); document.getElementById('speed_txt').innerText=Math.round(S.speed)+' km/h'; draw(); });
+},400);
+</script></body></html>
